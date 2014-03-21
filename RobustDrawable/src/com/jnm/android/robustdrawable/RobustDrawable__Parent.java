@@ -150,7 +150,7 @@ public class RobustDrawable__Parent extends Drawable {
 			try {
 				if(mKey.isAttemptable() && mKey.isPrompt()) {
 					RDBitmapLoaderJob job = new RDBitmapLoaderJob();
-					job.mKey = mKey;
+					job.mKey = mKey.clone();
 					job.processJob(true);
 					log("isPrompatable "+job.mBitmap);
 					if(job.mBitmap != null) {
