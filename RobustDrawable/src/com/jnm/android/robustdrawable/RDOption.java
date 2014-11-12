@@ -2,6 +2,7 @@ package com.jnm.android.robustdrawable;
 
 import android.graphics.Bitmap;
 
+
 public abstract class RDOption { // implements Comparable<RDOption> {
 //	Bitmap applyOption(Bitmap pBitmap) {
 //		switch (this) {
@@ -14,7 +15,13 @@ public abstract class RDOption { // implements Comparable<RDOption> {
 //		}
 //	}
 	
-	protected abstract Bitmap applyOption(RD__BitmapKey pRDBitmapKey, Bitmap pBitmap) throws Throwable;
+	protected void log(String pLog) {
+		if(RobustDrawable__Parent.isShowLog()) {
+			RDTool.log("RDOption] Class:"+this.getClass().getSimpleName()+" Log:"+pLog);
+		}
+	}
+	
+	public abstract Bitmap applyOption(RD__BitmapKey pRDBitmapKey, Bitmap pBitmap) throws Throwable;
 
 	public boolean isHardOption() {
 		return false;

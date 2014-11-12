@@ -9,6 +9,7 @@ import java.util.concurrent.Semaphore;
 import android.graphics.Bitmap;
 
 
+
 /** 
  * 실패하였을 경우에 대해 Listener가 발동해야 되지 않나?
  * 동시에 3개까지 돌릴수 있음
@@ -19,12 +20,14 @@ import android.graphics.Bitmap;
  */
 public final class RDBitmapDownloader {
 	private static void log(String pLog) {
-//		JMLog.e("RDBitmapDownloader] "+pLog);
+		if(RobustDrawable__Parent.isShowLog()) {
+			RDTool.log("RDBitmapDownloader] "+pLog);
+		}
 	}
 	
 	private static void check() {
 		if(sThread_BitmapDownloaders == null) {
-			sThread_BitmapDownloaders = new Thread_BitmapDownloader[Math.max(5, Math.min(1, RobustDrawable__Parent.getMemoryClass()/32*2))];
+			sThread_BitmapDownloaders = new Thread_BitmapDownloader[Math.max(6, Math.min(1, RobustDrawable__Parent.getMemoryClass()/8))];
 //			sThread_BitmapDownloaders = new Thread_BitmapDownloader[2];
 			for(int i=0;i<sThread_BitmapDownloaders.length;i++) {
 				sThread_BitmapDownloaders[i] = new Thread_BitmapDownloader(i);
@@ -59,7 +62,7 @@ public final class RDBitmapDownloader {
 	private static Thread_BitmapDownloader[] 		sThread_BitmapDownloaders 	= null;
 	private static final class Thread_BitmapDownloader extends Thread {
 		private int 				mThreadIndex;
-		private RDBitmapDownloaderJob		mCurBitmapLoader;
+		private RDBitmapDownloaderJob		mCurBitmapProcessor;
 		public Thread_BitmapDownloader(int pThreadIndex) {
 			mThreadIndex = pThreadIndex;
 		}
@@ -69,13 +72,13 @@ public final class RDBitmapDownloader {
 			super.run();
 			while(true) {
 				try {
-					mCurBitmapLoader = null;
+					mCurBitmapProcessor = null;
 					//					log("thread_downloader start1 "+sAccessSema.availablePermits());
 					synchronized (sQueue) {
 						try {
 							//						acquireAccess();
 							if(sQueue.size() > 0) {
-								mCurBitmapLoader = sQueue.remove(0);
+								mCurBitmapProcessor = sQueue.remove(0);
 							}
 						} catch (Exception e) {
 							RobustDrawable__Parent.ex(e);
@@ -85,14 +88,14 @@ public final class RDBitmapDownloader {
 					}
 					//					log("thread_downloader start2 "+sAccessSema.availablePermits());
 					
-					if(mCurBitmapLoader == null) {
+					if(mCurBitmapProcessor == null) {
 						sSemaphore_Queue.acquire();
 						
 						try {
 							//							acquireAccess();
 							synchronized (sQueue) {
 								if(sQueue.size() > 0) {
-									mCurBitmapLoader = sQueue.remove(0);
+									mCurBitmapProcessor = sQueue.remove(0);
 								}
 							}
 						} catch (Exception e) {
@@ -103,17 +106,18 @@ public final class RDBitmapDownloader {
 						//					log("thread_downloader start3 "+sAccessSema.availablePermits());
 					}
 					
-					if(mCurBitmapLoader == null) 
+					if(mCurBitmapProcessor == null) 
 						continue;
-					
-					mCurBitmapLoader.processJob(false);
+
+					mCurBitmapProcessor.mThreadIndex = mThreadIndex;
+					mCurBitmapProcessor.processJob(false);
 				} catch (Throwable e) {
 					RobustDrawable__Parent.ex(e);
 					try { Thread.sleep(50); } catch (InterruptedException ie) { }
 				} finally {
-					if(mCurBitmapLoader != null)
-						log("thread_downloader end key:"+mCurBitmapLoader.mKey);
-					mCurBitmapLoader = null;
+					if(mCurBitmapProcessor != null)
+						log("thread_downloader end key:"+mCurBitmapProcessor.mKey);
+					mCurBitmapProcessor = null;
 				}
 			}
 		}
@@ -124,11 +128,11 @@ public final class RDBitmapDownloader {
 	private static RDBitmapDownloaderJob getCurrentBJ(RDBitmapDownloaderJob pDownload) {
 		try {
 			for(Thread_BitmapDownloader t : sThread_BitmapDownloaders) {
-				if(t.mCurBitmapLoader != null) {
-					if(t.mCurBitmapLoader.mState == BJState.S1_BitmapDownloading) {
-						if(t.mCurBitmapLoader.mKey.getCacheFile_Original().equals(pDownload.mKey.getCacheFile_Original())) {
+				if(t.mCurBitmapProcessor != null) {
+					if(t.mCurBitmapProcessor.mState == BJState.S1_BitmapDownloading) {
+						if(t.mCurBitmapProcessor.mKey.getCacheFile_Original().equals(pDownload.mKey.getCacheFile_Original())) {
 							log("getCurrentBJ return cur "+t.mThreadIndex);
-							return t.mCurBitmapLoader;
+							return t.mCurBitmapProcessor;
 						}
 					}
 				}
@@ -149,8 +153,6 @@ public final class RDBitmapDownloader {
 	static void start(RD__BitmapKey pBitmapKey, OnRDBitmapDownloadListener pListener) {
 		check();
 		try {
-//			JMLog.e("RDBitmapDownloader start Key:"+pBitmapKey);
-			
 			RDBitmapDownloaderJob bj = new RDBitmapDownloaderJob();
 			bj.mKey = pBitmapKey.clone();
 			bj.addOnBitmapDownloadListener(pListener);
@@ -164,6 +166,11 @@ public final class RDBitmapDownloader {
 		S0_InQueue, S1_BitmapDownloading, S9_Failed, S9_Successed, S9_Finished,
 	}
 	static class RDBitmapDownloaderJob {
+		private void log(String pLog) {
+			RDBitmapDownloader.log("RDBitmapDownloaderJob:"+mThreadIndex+"] "+pLog);
+//			JMLog.e("RD_BitmapLoaderJob:"+mThreadIndex+"] "+pLog);
+		}
+		int 			mThreadIndex = -1;
 		Throwable 		mThrowable = null;
 		
 		BJState 		mState;
@@ -189,8 +196,7 @@ public final class RDBitmapDownloader {
 				if(bm == null) {
 					log("create 2: "+mKey);
 					if(mKey.getKey() != null && mKey.getKeyWithoutSize() != null) {
-						mKey.download_To_CacheFile_Original();
-						mKey.onDownloaded_To_CacheFile_Original();
+						mKey.doDownload_To_CacheFile_Original();
 						log("create 2.2: Key:"+mKey+", len:"+mKey.getCacheFile_Original().length());
 					}
 				}
@@ -201,10 +207,6 @@ public final class RDBitmapDownloader {
 			} catch (Throwable e) {
 				mState 		= BJState.S9_Failed;
 				mThrowable 	= e;
-				
-				if(e instanceof OutOfMemoryError) {
-					RobustDrawable__Parent.recycleAll();
-				}
 				
 				RobustDrawable__Parent.ex(e);
 			} finally {
@@ -227,7 +229,6 @@ public final class RDBitmapDownloader {
 			return super.equals(o);
 		}
 		
-//		private HashSet<OnRDBitmapLoadListener> 	mListeners = new HashSet<OnRDBitmapLoadListener>();
 		private Set<OnRDBitmapDownloadListener> 	mListeners = Collections.synchronizedSet(new HashSet<OnRDBitmapDownloadListener>());
 		public RDBitmapDownloaderJob addOnBitmapDownloadListener(OnRDBitmapDownloadListener pListener) {
 			synchronized (mListeners) {

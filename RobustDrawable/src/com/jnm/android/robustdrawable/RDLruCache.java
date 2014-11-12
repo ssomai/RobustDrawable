@@ -16,9 +16,12 @@
 
 package com.jnm.android.robustdrawable;
 
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+
 
 /**
  * Static library version of {@link android.util.LruCache}. Used to write apps
@@ -28,7 +31,14 @@ import java.util.Map.Entry;
  * overview.
  */
 class RDLruCache<K, V> {
-    private final LinkedHashMap<K, V> map;
+	private static void log(String pLog) {
+		if(RobustDrawable__Parent.isShowLog()) {
+			RDTool.log("RDLruCache] "+pLog);
+		}
+	}
+	
+//    private final LinkedHashMap<K, V> map;
+    private final Map<K, V> map;
 
     /** Size of this cache in units. Not necessarily the number of elements. */
     private int size;
@@ -50,7 +60,8 @@ class RDLruCache<K, V> {
             throw new IllegalArgumentException("maxSize <= 0");
         }
         this.maxSize = maxSize;
-        this.map = new LinkedHashMap<K, V>(0, 0.75f, true);
+//        this.map = new LinkedHashMap<K, V>(0, 0.75f, true);
+        this.map = Collections.synchronizedMap(new LinkedHashMap<K, V>(0, 0.75f, true));
     }
 
     /**
@@ -140,18 +151,23 @@ class RDLruCache<K, V> {
      * Remove the eldest entries until the total of remaining entries is at or
      * below the requested size.
      *
-     * @param maxSize the maximum size of the cache before returning. May be -1
+     * @param pMaxSize the maximum size of the cache before returning. May be -1
      *            to evict even 0-sized elements.
      */
-    public void trimToSize(int maxSize) {
+    public void trimToSize(int pMaxSize) {
+    	trimToSize(pMaxSize, false);
+    }
+    public void trimToSize(int pMaxSize, boolean pRightNow) {
     	while (true) {
-    		K key;
-    		V value;
+    		K key = null;
+    		V value = null;
     		synchronized (this) {
     			if (size < 0 || (map.isEmpty() && size != 0)) {
-    				RobustDrawable__Parent.ex(new IllegalStateException(getClass().getName()+".sizeOf() is reporting inconsistent results! "+size+", "+map.isEmpty()));
+    				RobustDrawable__Parent.ex(new IllegalStateException(
+    					getClass().getName()+".sizeOf() is reporting inconsistent results! "+
+    						" size:"+size+" MaxSize:"+pMaxSize+" map.size:"+map.size()+" evictionCount:"+evictionCount));
     				
-    				if(maxSize <= 1) {
+    				if(pMaxSize < 0) {
     					if(map.size() <= 0) {
     						size = 0;
     					} else {
@@ -166,19 +182,36 @@ class RDLruCache<K, V> {
     				}
     			}
     			
-    			if (size <= maxSize || map.isEmpty()) {
+    			log("size:"+size+" pMaxSize:"+pMaxSize+" mapSize:"+map.size()+" mapEmpty:"+map.isEmpty());
+    			if (size <= pMaxSize || map.isEmpty()) {
     				break;
     			}
     			
-    			Map.Entry<K, V> toEvict = map.entrySet().iterator().next();
-    			key = toEvict.getKey();
-    			value = toEvict.getValue();
-    			map.remove(key);
-    			size -= safeSizeOf(key, value);
-    			evictionCount++;
+    			Iterator<K> it = map.keySet().iterator();
+    			while(it.hasNext()) {
+    				key 	= it.next();
+    				value 	= map.remove(key);
+    				log("map remove key: "+key+" removed:"+value);
+    				if(value != null) {
+    					break;
+    				}
+    			}
+    			if(pMaxSize <= 0 && value == null) {
+    				map.clear();
+    			}
+    			
+    			if(key != null && value != null) {
+    				size -= safeSizeOf(key, value);
+    				evictionCount++;
+    			}
     		}
     		
-    		entryRemoved(true, key, value, null);
+    		if(key != null && value != null) {
+    			entryRemoved(true, key, value, null);
+    		}
+    	}
+    	if(pRightNow == true) {
+    		System.gc();
     	}
     }
 

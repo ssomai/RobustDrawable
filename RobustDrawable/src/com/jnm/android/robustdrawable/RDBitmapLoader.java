@@ -12,14 +12,13 @@ import java.util.concurrent.Semaphore;
 
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.CompressFormat;
+import android.graphics.Bitmap.Config;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.media.ExifInterface;
-
-import com.jnm.android.robustdrawable.RDBitmapDownloader.OnRDBitmapDownloadListener;
-import com.jnm.android.robustdrawable.RDBitmapDownloader.RDBitmapDownloaderJob;
+import android.os.Build;
 
 
 /** 
@@ -32,13 +31,14 @@ import com.jnm.android.robustdrawable.RDBitmapDownloader.RDBitmapDownloaderJob;
  */
 public final class RDBitmapLoader {
 	private static void log(String pLog) {
-//		JMLog.e("RD_BitmapLoader] "+pLog);
+		if(RobustDrawable__Parent.isShowLog()) {
+			RDTool.log("RDBitmapLoader] "+pLog);
+		}
 	}
 	
 	private static void check() {
 		if(sThread_BitmapLoaders == null) {
-//			sThread_BitmapLoaders = new Thread_BitmapLoader[2];
-			sThread_BitmapLoaders = new Thread_BitmapLoader[Math.max(2, Math.min(1, RobustDrawable__Parent.getMemoryClass()/32))];
+			sThread_BitmapLoaders = new Thread_BitmapLoader[Math.max(3, Math.min(1, RobustDrawable__Parent.getMemoryClass()/8/2))];
 			for(int i=0;i<sThread_BitmapLoaders.length;i++) {
 				sThread_BitmapLoaders[i] = new Thread_BitmapLoader(i);
 				sThread_BitmapLoaders[i].setDaemon(true);
@@ -54,7 +54,7 @@ public final class RDBitmapLoader {
 	private static Thread_BitmapLoader[] 		sThread_BitmapLoaders 	= null;
 	private static final class Thread_BitmapLoader extends Thread {
 		private int 				mThreadIndex;
-		private RDBitmapLoaderJob		mCurBitmapLoader;
+		private RDBitmapLoaderJob		mCurBitmapProcessor;
 		public Thread_BitmapLoader(int pThreadIndex) {
 			mThreadIndex = pThreadIndex;
 		}
@@ -64,12 +64,12 @@ public final class RDBitmapLoader {
 			super.run();
 			while(true) {
 				try {
-					mCurBitmapLoader = null;
+					mCurBitmapProcessor = null;
 //					log("thread_downloader start1 "+sAccessSema.availablePermits());
 					try {
 						synchronized (sQueue) {
 							if(sQueue.size() > 0) {
-								mCurBitmapLoader = sQueue.remove(0);
+								mCurBitmapProcessor = sQueue.remove(0);
 							}
 						}
 					} catch (Exception e) {
@@ -77,14 +77,14 @@ public final class RDBitmapLoader {
 					}
 //					log("thread_downloader start2 "+sAccessSema.availablePermits());
 					
-					if(mCurBitmapLoader == null) {
+					if(mCurBitmapProcessor == null) {
 						sSemaphore_Queue.acquire();
 						
 						try {
 //							acquireAccess();
 							synchronized (sQueue) {
 								if(sQueue.size() > 0) {
-									mCurBitmapLoader = sQueue.remove(0);
+									mCurBitmapProcessor = sQueue.remove(0);
 								}
 							}
 						} catch (Exception e) {
@@ -95,18 +95,20 @@ public final class RDBitmapLoader {
 					}
 //					log("thread_downloader start3 "+sAccessSema.availablePermits());
 					
-					if(mCurBitmapLoader == null) 
+					if(mCurBitmapProcessor == null) 
 						continue;
 					
-					mCurBitmapLoader.mThreadIndex = mThreadIndex;
-					mCurBitmapLoader.processJob(false);
+					mCurBitmapProcessor.mThreadIndex = mThreadIndex;
+					mCurBitmapProcessor.processJob(false);
+				} catch (OutOfMemoryError e) {
+					
 				} catch (Throwable e) {
 					RobustDrawable__Parent.ex(e);
 					try { Thread.sleep(50); } catch (InterruptedException ie) { }
 				} finally {
-					if(mCurBitmapLoader != null) {
-						synchronized (mCurBitmapLoader) {
-							mCurBitmapLoader = null;
+					if(mCurBitmapProcessor != null) {
+						synchronized (mCurBitmapProcessor) {
+							mCurBitmapProcessor = null;
 						}
 					}
 				}
@@ -120,32 +122,20 @@ public final class RDBitmapLoader {
 		synchronized (sQueue) {
 			try {
 				for(Thread_BitmapLoader t : sThread_BitmapLoaders) {
-					if(t != null) {
-						synchronized (t) {
-							if(t.mCurBitmapLoader != null) {
-								if(t.mCurBitmapLoader.mState == BJBitmapLoaderJobState.S1_BitmapLoading) {
-									if(	t.mCurBitmapLoader.mKey != null &&
-										t.mCurBitmapLoader.mKey.getCacheFile_Result() != null && 
-										pLoad != null &&
-										pLoad.mKey != null &&
-										pLoad.mKey.getCacheFile_Result() != null) {
-										
-//										JMLog.e("t0:"+t);
-//										JMLog.e("t1:"+t.mCurBitmapLoader);
-//										JMLog.e("t2:"+t.mCurBitmapLoader.mKey);
-//										JMLog.e("t3:"+t.mCurBitmapLoader.mKey.getCacheFile_Result());
-//										
-//										JMLog.e("p0:"+pLoad);
-//										JMLog.e("p1:"+pLoad.mKey);
-//										JMLog.e("p2:"+pLoad.mKey.getCacheFile_Result());
-										
-										if(t.mCurBitmapLoader.mKey.getCacheFile_Result() == pLoad.mKey.getCacheFile_Result()) {
-											return t.mCurBitmapLoader;
-										}
-									}
-								}
+					try {
+						if(t.mCurBitmapProcessor.mState == BJBitmapLoaderJobState.S1_BitmapLoading) {
+							//								if(	t.mCurBitmapLoader.mKey != null &&
+							//									t.mCurBitmapLoader.mKey.getCacheFile_Result() != null && 
+							//									pLoad != null &&
+							//									pLoad.mKey != null &&
+							//									pLoad.mKey.getCacheFile_Result() != null) {
+							
+							if(t.mCurBitmapProcessor.mKey.getCacheFile_Result() == pLoad.mKey.getCacheFile_Result()) {
+								return t.mCurBitmapProcessor;
 							}
+							//								}
 						}
+					} catch (NullPointerException e) {
 					}
 				}
 				
@@ -179,8 +169,14 @@ public final class RDBitmapLoader {
 	}
 	static class RDBitmapLoaderJob {
 		private void log(String pLog) {
-//			RDBitmapLoader.log("RD_BitmapLoaderJob:"+mThreadIndex+"] "+pLog);
-//			JMLog.e("RD_BitmapLoaderJob:"+mThreadIndex+"] "+pLog);
+//			if(Tool_App.isMainThread()) {
+//				if(mKey instanceof RD_Resource) {
+//					if(((RD_Resource) mKey).getResID() == R.drawable.aa_image_horizontal) {
+//						JMLog.e("!!:"+mThreadIndex+"] "+pLog);
+//					}
+//				}
+//			}
+			RDBitmapLoader.log("RD_BitmapLoaderJob:"+mThreadIndex+"] "+pLog);
 		}
 		int 			mThreadIndex = -1;
 		Bitmap 			mBitmap;
@@ -189,17 +185,52 @@ public final class RDBitmapLoader {
 		BJBitmapLoaderJobState 		mState = BJBitmapLoaderJobState.S0_InQueue;
 		RD__BitmapKey 	mKey;
 		private Bitmap loadBitmapWithCacheFile() throws Throwable {
+			File lCacheFile_Original = mKey.getCacheFile_Original();
+			if(lCacheFile_Original.exists() == false) {
+				return null;
+			}
 			Bitmap bm = null;
-			File tf = mKey.getCacheFile_Result();
+			File lCacheFile_Result = mKey.getCacheFile_Result();
 			FileOutputStream fos = null;
 			try {
-				if(tf.exists() && tf.lastModified() > mKey.getCacheFile_Original().lastModified() && tf.lastModified() > RobustDrawable_Tool.getCurrentTime() - 7*24*60*60*1000) {
-					log("loadBitmapWithCacheFile from CacheFile_Result Key:"+mKey);
-					bm = createBitmap(tf, mKey.getDstWidth(), mKey.getDstHeight(), mKey);
+//				if(mKey.isPrompt()) {
+//					log("loadBitmapWithCacheFile from direct Key:"+mKey);
+//					bm = mKey.loadResultBitmap();
+//				} else 
+//				log("loadBitmapWithCacheFile from direct Key:"+mKey);
+//				log("loadBitmapWithCacheFile 0 "+lCacheFile_Result.exists()+","+lCacheFile_Original.exists()+","+(lCacheFile_Result.lastModified() > mKey.getCacheFile_Original().lastModified()));
+				if(lCacheFile_Result.exists() && 
+//					lCacheFile_Result.lastModified() > mKey.getCacheFile_Original().lastModified() && 
+//					lCacheFile_Result.lastModified() > JMDate.getCurrentTime() - 7*JMDate.TIME_Day) {
+					lCacheFile_Result.lastModified() > mKey.getCacheFile_Original().lastModified()) {
+					log("loadBitmapWithCacheFile 1");
+					
+//					log("loadBitmapWithCacheFile from CacheFile_Result Key:"+mKey);
+//					bm = createBitmap(lCacheFile_Result, mKey.getDstWidth(), mKey.getDstHeight(), mKey);
+
+//					JMLog.e("loadBitmapWithCacheFile from CacheFile_Result 1");
+					
+					{
+						FileInputStream fis = new FileInputStream(lCacheFile_Result);
+//						log("createBitmap Key:"+pKey+" lSampleSize:"+lSampleSize);
+//						bm = createBitmap(fis, lSampleSize, pMaxWidth, pMaxHeight);
+
+//						BitmapFactory.Options options = new BitmapFactory.Options();
+//						if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
+//							options.inPreferredConfig = Config.ARGB_8888;
+//						}
+//						bm = BitmapFactory.decodeStream(fis, null, options);
+						bm = BitmapFactory.decodeStream(fis);
+						fis.close();
+					}
 				} else {
-					log("loadBitmapWithCacheFile from CacheFile_Original Key:"+mKey+" ScaleType:"+mKey.getScaleType());
+					log("loadBitmapWithCacheFile 2.0");
+//					JMLog.e("loadBitmapWithCacheFile from CacheFile_Original Key:"+mKey+" ScaleType:"+mKey.getScaleType()+" Dst:("+mKey.getDstWidth()+","+mKey.getDstHeight()+")");
 					bm = createBitmap(mKey.getCacheFile_Original(), mKey.getDstWidth(), mKey.getDstHeight(), mKey);
+					log("loadBitmapWithCacheFile from CacheFile_Original 1 bm("+bm.getWidth()+","+bm.getHeight()+")");
+//					log("loadBitmapWithCacheFile 2.1");
 					bm = rotateByEXIF(bm, mKey.getCacheFile_Original());
+					log("loadBitmapWithCacheFile from CacheFile_Original 2 bm("+bm.getWidth()+","+bm.getHeight()+")");
 					
 					switch (mKey.getScaleType()) {
 					case CENTER_CROP:
@@ -208,34 +239,51 @@ public final class RDBitmapLoader {
 					default:
 						break;
 					}
+//					log("loadBitmapWithCacheFile 2.2");
+					log("loadBitmapWithCacheFile from CacheFile_Original 3 bm("+bm.getWidth()+","+bm.getHeight()+")");
+					
 					bm = mKey.applyOptions(bm);
 					
-					log("write Bitmap To CacheFile_Result bm("+bm.getWidth()+", "+bm.getHeight()+")");
-					fos = new FileOutputStream(tf);
+//					log("write Bitmap To CacheFile_Result bm("+bm.getWidth()+","+bm.getHeight()+")");
+					fos = new FileOutputStream(lCacheFile_Result);
 					bm.compress(CompressFormat.PNG, 90, fos);
+					log("loadBitmapWithCacheFile 2.3");
 				}
 			} catch (Throwable e) {
 				if(bm != null) {
 					if(bm.isRecycled() == false) {
-						bm.recycle();
+//						synchronized (bm) {
+							bm.recycle();							
+//						}
 					}
 					bm = null;
 				}
 
 				throw e;
 			} finally {
-				if(fos != null) { try { fos.close(); } catch (Throwable e2) { } }
+				if(fos != null) { try { fos.close(); } catch (Throwable e) { } }
+				
+				if(bm == null) {
+					mKey.deleteCacheFiles_BecauseThrowed();
+//					mKey.getCacheFile_Original().delete();
+//					mKey.getCacheFile_Result().delete();
+				}
 			}
 			return bm;
 		}
 		
-		private static int MaxRetryCount = 2;
+		
+		private static final int MaxRetryCount = 2;
 		void processJob(boolean pIsPrompt) {
+			long start = RDTool.getCurrentTime();
+				log("processJob 1 Key:"+mKey);
+			
 			for(int i=0;i<MaxRetryCount;i++) {
 				try {
+					mKey.lock_Acquire_CacheFiles();
 					mState = BJBitmapLoaderJobState.S1_BitmapLoading;
 					
-					log("Runnable Downloader ");
+					log("Runnable Loader "+i);
 					Bitmap bm = null;
 					if(pIsPrompt == false) {
 						bm = RobustDrawable__Parent.getCache(mKey);
@@ -246,38 +294,31 @@ public final class RDBitmapLoader {
 							}
 						}
 					}
-					
-					if(bm == null) {
-						log("create 2.0: "+mKey);
-						if(mKey.getKey() != null && mKey.getKeyWithoutSize() != null) {
-							if(mKey.isPrompt() == false) {
-								log("create 2.2: Key:"+mKey+", len:"+mKey.getCacheFile_Original().length()+" rlen:"+mKey.getCacheFile_Result().length());
-								if(pIsPrompt == false && mKey.getCacheFile_Original().exists() == false) {
-									mKey.download_To_CacheFile_Original();
-									mKey.onDownloaded_To_CacheFile_Original();
-								}
-								bm = loadBitmapWithCacheFile();
-							} else {
-								log("create 2.3: Key:"+mKey+", CacheFile_Orignal:"+mKey.getCacheFile_Original().length()+" rlen:"+mKey.getCacheFile_Result().length());
-								bm = mKey.loadResultBitmap();
-//								bm = mKey.applyOptions(bm);
 
-//								FileOutputStream fos = null;
-//								try {
-//									fos = new FileOutputStream(mKey.getCacheFile_Result());
-//									bm.compress(CompressFormat.PNG, 100, fos);
-//								} catch (Throwable e) {
-//									throw e;
-//								} finally {
-//									if(fos != null) { try { fos.close(); } catch (Throwable e2) { } }
+					if(bm == null) {
+						log("create 2.0: ");
+//						log("create 2.0: "+mKey+" IsMainThread:"+Tool_App.isMainThread());
+						if(mKey.getKey() != null && mKey.getKeyWithoutSize() != null) {
+//							if(mKey.isPrompt() == false) {
+//								log("create 2.2: Key:"+mKey+", len:"+mKey.getCacheFile_Original().length()+" rlen:"+mKey.getCacheFile_Result().length()+" pIsPrompt:"+pIsPrompt);
+//								if(pIsPrompt == false) {
+//									if(mKey.getCacheFile_Original().exists() == false) {
+//									log("create 2.2.1: ");
+//									mKey.download_To_CacheFile_Original();
+//									mKey.onDownloaded_To_CacheFile_Original();
+									mKey.doDownload_To_CacheFile_Original();
+									log("create 2.2.1: ");
+//									} 
 //								}
-							}
+								bm = loadBitmapWithCacheFile();
+//							} else {
+//								log("create 2.3: Key:"+mKey+", CacheFile_Orignal:"+mKey.getCacheFile_Original().length()+" rlen:"+mKey.getCacheFile_Result().length());
+//								bm = mKey.loadResultBitmap();
+////								bm = mKey.applyOptions(bm);
+//							}
 						}
 					}
-					log("create 3.0: "+mKey);
-//					if(bm != null) {
-//						throw new IllegalStateException("고의 에러!");
-//					}
+					log("create 3.0: "+mKey+" "+mKey.getDstWidth()+", "+mKey.getDstHeight()+" "+mKey.getDstRect()+", "+mKey.onBounded());
 					
 					if(bm != null) {
 						if(bm.isRecycled() == false) {
@@ -297,30 +338,33 @@ public final class RDBitmapLoader {
 							mBitmap.recycle();
 						}
 					}
-					if(mKey.isDeletable_CacheFile_Original())
-						mKey.getCacheFile_Original().delete();
-					mKey.getCacheFile_Result().delete();
+					mKey.deleteCacheFiles_BecauseThrowed();
+//					mKey.getCacheFile_Result().delete();
 					mBitmap 	= null;
 					mThrowable 	= e;
 					mState 		= BJBitmapLoaderJobState.S9_Failed;
 					
 					if(e instanceof OutOfMemoryError) {
-						RobustDrawable__Parent.recycleAll();
+						RobustDrawable__Parent.recycleAll(true, true);
 					}
 					
-					RobustDrawable__Parent.ex(e);
+					RobustDrawable__Parent.ex(e, "Key: "+mKey.toString());
 				} finally {
+					mKey.lock_Release_CacheFiles();
 					if(mState == BJBitmapLoaderJobState.S9_Successed || i >= MaxRetryCount-1) {
 						submitBitmapResult();
 						break;
 					}
 				}
 			}
+			
+				log("processJob End "+(RDTool.getCurrentTime()-start)+" Key:"+mKey);
 		}
 		private void submitBitmapResult() {
-//			synchronized (mListeners) {
-			synchronized (this) {
+			synchronized (mListeners) {
+//			synchronized (this) {
 //				for(final OnRDBitmapLoadListener a : mListeners) {
+				log("submitBitmapResult Listeners.Size:"+mListeners.size()+" State:"+mState);
 				for(OnRDBitmapLoadListener a : mListeners) {
 //					JMProject_AndroidApp.getHandler().post(new Runnable() {
 //						@Override
@@ -364,7 +408,7 @@ public final class RDBitmapLoader {
 					Bitmap bm = null;
 					log("rotateByEXIF2 "+pBitmap);
 					try {
-						bm = Bitmap.createBitmap(pBitmap, 0, 0, pBitmap.getWidth(), pBitmap.getHeight(), matrix, true );
+						bm = Bitmap.createBitmap(pBitmap, 0, 0, pBitmap.getWidth(), pBitmap.getHeight(), matrix, true);
 					} catch (Throwable e) {
 						if(bm != null) {
 							if(bm.isRecycled() == false) {
@@ -375,10 +419,8 @@ public final class RDBitmapLoader {
 						throw e;
 					}
 					if (bm != null) {
-						log("rotateByEXIF3 "+bm);
 						if(bm.isRecycled() == false) {
 							pBitmap.recycle();
-							log("rotateByEXIF4 "+bm+", "+pBitmap);
 							pBitmap = bm;
 						}
 					}
@@ -433,7 +475,7 @@ public final class RDBitmapLoader {
 		
 		private Set<OnRDBitmapLoadListener> 	mListeners = Collections.synchronizedSet(new HashSet<OnRDBitmapLoadListener>());
 		private RDBitmapLoaderJob addOnBitmapLoadListener(OnRDBitmapLoadListener pListener) {
-			synchronized (RDBitmapLoaderJob.this) {
+			synchronized (mListeners) {
 				mListeners.add(pListener);
 			}
 			return this;
@@ -468,9 +510,9 @@ public final class RDBitmapLoader {
 							if(lCurBJ != null) {
 								stt(lCurBJ);
 							} else {
-								RDBitmapDownloader.start(mKey, new OnRDBitmapDownloadListener() {
+								RDBitmapDownloader.start(mKey, new RDBitmapDownloader.OnRDBitmapDownloadListener() {
 									@Override
-									public void onBitmapLoaded(RDBitmapDownloaderJob pRequester) {
+									public void onBitmapLoaded(RDBitmapDownloader.RDBitmapDownloaderJob pRequester) {
 										log("RDBitmapDownloader end Request.Key:"+pRequester.mKey+" key:"+RDBitmapLoaderJob.this.mKey);
 										
 										if(pRequester.mThrowable != null) {
@@ -491,7 +533,9 @@ public final class RDBitmapLoader {
 											stt(lCurBJ);
 										} else {
 											log("큐에 추가 key:"+mKey);
-											sQueue.add(0, RDBitmapLoaderJob.this);
+											synchronized (sQueue) {
+												sQueue.add(0, RDBitmapLoaderJob.this);
+                                            }
 											sSemaphore_Queue.release();
 										}
 									}
@@ -509,9 +553,26 @@ public final class RDBitmapLoader {
 		}
 	}
 	
+
+//	protected static int getSampleSize(int pSrcWidth, int pSrcHeight, int pMaxWidth, int pMaxHeight) {
+//		int ret = 1;
+//		if(pSrcWidth > 1 && pSrcHeight > 1 && pMaxWidth > 1 && pMaxHeight > 1) {
+//			if(Tool_App.isTablet() || Tool_App.getDisplayMetrics().densityDpi <= DisplayMetrics.DENSITY_HIGH) {
+//				while((pSrcWidth / ret > pMaxWidth * 2f) && (pSrcHeight / ret > pMaxHeight * 2f)) {
+//					ret *= 2;
+//				}
+//			} else {
+//				while((pSrcWidth /  ret > pMaxWidth * 1.5f) && (pSrcHeight / ret > pMaxHeight * 1.5f)) {
+//					ret *= 2;
+//				}
+//			}
+//		}
+//		return ret;
+//	}
 	static Bitmap createBitmap(File pFile, int pMaxWidth, int pMaxHeight, RD__BitmapKey pKey) throws Throwable {
 		Bitmap bm = null;
 		try {
+			log("createBitmap IsMainThread:"+RDTool.isMainThread());
 			int lSampleSize = 1;
 
 			BitmapFactory.Options getsize = new BitmapFactory.Options();
@@ -520,111 +581,174 @@ public final class RDBitmapLoader {
 				getsize.inJustDecodeBounds = true;
 				BitmapFactory.decodeStream(fis, null, getsize);
 				
-				lSampleSize = 1;
+				lSampleSize = RDBitmapLoader.calculateSampleSize(getsize.outWidth, getsize.outHeight, pMaxWidth, pMaxHeight);
 				
-				// Bitmap의 세로가 더 긴 경우, 목표의 가로에 맞춰서 SampleSize 지정
-				if((pMaxWidth*100/pMaxHeight) > (getsize.outWidth*100/getsize.outHeight)) {
-					while(getsize.outWidth > pMaxWidth*2) {
-						lSampleSize *= 2;
-						getsize.outWidth /= 2;
-					}
-				} else {
-					while(getsize.outHeight > pMaxHeight*2) {
-						lSampleSize *= 2;
-						getsize.outHeight /= 2;
-					}
-				}
+				
+//				lSampleSize = 1;
+//				
+//				// Bitmap의 세로가 더 긴 경우, 목표의 가로에 맞춰서 SampleSize 지정
+//				if((pMaxWidth*100/pMaxHeight) > (getsize.outWidth*100/getsize.outHeight)) {
+//					while(getsize.outWidth > pMaxWidth*2) {
+//						lSampleSize *= 2;
+//						getsize.outWidth /= 2;
+//					}
+//				} else {
+//					while(getsize.outHeight > pMaxHeight*2) {
+//						lSampleSize *= 2;
+//						getsize.outHeight /= 2;
+//					}
+//				}
 				
 				fis.close();
 			}
 			
 			{
 				FileInputStream fis = new FileInputStream(pFile);
-				log("createBitmap lSampleSize:"+lSampleSize);
-				bm = createBitmap(fis, lSampleSize, pMaxWidth, pMaxHeight);
+				log("createBitmap Key:"+pKey+" lSampleSize:"+lSampleSize);
+//				bm = createBitmap(fis, lSampleSize, pMaxWidth, pMaxHeight);
+
+				BitmapFactory.Options options = new BitmapFactory.Options();
+				options.inSampleSize = lSampleSize;
+				if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
+					options.inPreferredConfig = Config.ARGB_8888;
+				}
+				
+				bm = BitmapFactory.decodeStream(fis, null, options);
 				fis.close();
 			}
 			
-//			log("createBitmap File result bm:"+bm);
-			if(bm != null) {
-//				log("createBitmap pMaxWidth:"+pMaxWidth+" pMaxHeight:"+pMaxHeight+" getWidth:"+bm.getWidth()+" getHeight:"+bm.getHeight());
-				if(pMaxWidth > 0 && pMaxHeight > 0 && (pMaxWidth < bm.getWidth() || pMaxHeight < bm.getHeight())) {
-					Bitmap sbm = null;
-					
-					log("loaded fit_xy Key:"+pKey+" ScaleType:"+pKey.getScaleType());
-					switch (pKey.getScaleType()) {
-					case FIT_XY:
-						sbm = Bitmap.createScaledBitmap(bm, pMaxWidth, pMaxHeight, true);
-						break;
-					default: {
-						if((pMaxWidth*100/pMaxHeight) > (bm.getWidth()*100/bm.getHeight())) {
-							// Bitmap의 세로가 더 긴 경우, 목표의 가로에 맞춰서 스케일
-							if(pMaxWidth < bm.getWidth()) {
-								sbm = Bitmap.createScaledBitmap(bm, pMaxWidth, Math.round(((float)pMaxWidth)*((float)bm.getHeight())/((float)bm.getWidth())), true);
-							}
-						} else {
-							// Bitmap의 가로가 더 긴 경우, 목표의 세로에 맞춰서 스케일
-							if(pMaxHeight < bm.getHeight()) {
-								sbm = Bitmap.createScaledBitmap(bm, Math.round(((float)pMaxHeight)*((float)bm.getWidth())/((float)bm.getHeight())), pMaxHeight, true);
-							}
-						}
-					} break;
-					}
-					
-					if(sbm != null && sbm != bm) {
-						bm.recycle();
-						bm = sbm;
-					}
-				}
+			log("createBitmap Key:"+pKey+" File result bm:"+bm);
+			if(bm == null) {
+				throw new NullPointerException(" pMaxWidth:"+pMaxWidth+" pMaxHeight:"+pMaxHeight+" pFile:"+pFile+" Exist:"+pFile.exists()+" Length:"+pFile.length());
 			}
-		} catch(Throwable e) {
-			if(bm != null) {
-				if(bm.isRecycled() == false) {
-					bm.recycle();
+			
+			log("createBitmap Key:"+pKey+" Color:"+bm.getConfig().name()+" pMaxWidth:"+pMaxWidth+" pMaxHeight:"+pMaxHeight+" getWidth:"+bm.getWidth()+" getHeight:"+bm.getHeight());
+			if(pMaxWidth > 0 && pMaxHeight > 0 && (pMaxWidth < bm.getWidth() || pMaxHeight < bm.getHeight())) {
+				Bitmap sbm = null;
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1) {
+					bm.setHasAlpha(true);
 				}
-				bm = null;
-			}
-			throw e;
-		}
-		return bm;
-	}
-	private static Bitmap createBitmap(InputStream pIS, int inSampleSize, int pMaxWidth, int pMaxHeight) throws Throwable {
-		Bitmap bm = null;
-		try {
-			BitmapFactory.Options options = new BitmapFactory.Options();
-			options.inSampleSize = inSampleSize;
-			
-			bm = BitmapFactory.decodeStream(pIS, null, options);
-			
-			if(bm != null) {
-//				log("createBitmap pMaxWidth:"+pMaxWidth+" pMaxHeight:"+pMaxHeight+" getWidth:"+bm.getWidth()+" getHeight:"+bm.getHeight());
-				if(pMaxWidth > 0 && pMaxHeight > 0 && (pMaxWidth < bm.getWidth() || pMaxHeight < bm.getHeight())) {
-					Bitmap sbm = null;
+				
+				log("loaded fit_xy Key:"+pKey+" ScaleType:"+pKey.getScaleType());
+				switch (pKey.getScaleType()) {
+				case FIT_XY: {
+					sbm = Bitmap.createScaledBitmap(bm, pMaxWidth, pMaxHeight, true);
+				} break;
+				default: {
 					if((pMaxWidth*100/pMaxHeight) > (bm.getWidth()*100/bm.getHeight())) {
 						// Bitmap의 세로가 더 긴 경우, 목표의 가로에 맞춰서 스케일
 						if(pMaxWidth < bm.getWidth()) {
 							sbm = Bitmap.createScaledBitmap(bm, pMaxWidth, Math.round(((float)pMaxWidth)*((float)bm.getHeight())/((float)bm.getWidth())), true);
+//							sbm = Bitmap.createScaledBitmap(bm, pMaxWidth, Math.round(((float)pMaxWidth)*((float)bm.getHeight())/((float)bm.getWidth())), false);
 						}
 					} else {
 						// Bitmap의 가로가 더 긴 경우, 목표의 세로에 맞춰서 스케일
 						if(pMaxHeight < bm.getHeight()) {
 							sbm = Bitmap.createScaledBitmap(bm, Math.round(((float)pMaxHeight)*((float)bm.getWidth())/((float)bm.getHeight())), pMaxHeight, true);
+//							sbm = Bitmap.createScaledBitmap(bm, Math.round(((float)pMaxHeight)*((float)bm.getWidth())/((float)bm.getHeight())), pMaxHeight, false);
 						}
-						
 					}
-					if(sbm != null && sbm != bm) {
-						
-						bm.recycle();
-						bm = sbm;
-					}
+				} break;
+				}
+				
+				if(sbm != null && sbm != bm) {
+					bm.recycle();
+					bm = sbm;
 				}
 			}
 		} catch(Throwable e) {
-			if(bm != null && bm.isRecycled() == false) 
-				bm.recycle();
-			bm = null;
+			if(bm != null) {
+				if(bm.isRecycled() == false) {
+//					synchronized (bm) {
+						bm.recycle();
+//					}
+				}
+				bm = null;
+			}
 			throw e;
+		}
+		log("createBitmap Key:"+pKey+" result bm:"+bm);
+		if(bm != null) {
+			log("createBitmap Key:"+pKey+" bm Config:"+bm.getConfig().name());
 		}
 		return bm;
 	}
+//	private static Bitmap createBitmap(InputStream pIS, int inSampleSize, int pMaxWidth, int pMaxHeight) throws Throwable {
+//		Bitmap bm = null;
+//		try {
+//			BitmapFactory.Options options = new BitmapFactory.Options();
+//			options.inSampleSize = inSampleSize;
+//			
+//			bm = BitmapFactory.decodeStream(pIS, null, options);
+//			
+////			log("createBitmap InputStream bm:"+bm);
+////			if(bm == null) {
+////				throw new NullPointerException(" "+pIS.available()+" "+inSampleSize);
+////			}
+////			
+////			log("createBitmap pMaxWidth:"+pMaxWidth+" pMaxHeight:"+pMaxHeight+" getWidth:"+bm.getWidth()+" getHeight:"+bm.getHeight());
+////			if(pMaxWidth > 0 && pMaxHeight > 0 && (pMaxWidth < bm.getWidth() || pMaxHeight < bm.getHeight())) {
+////				Bitmap sbm = null;
+////				if((pMaxWidth*100/pMaxHeight) > (bm.getWidth()*100/bm.getHeight())) {
+////					// Bitmap의 세로가 더 긴 경우, 목표의 가로에 맞춰서 스케일
+////					if(pMaxWidth < bm.getWidth()) {
+////						sbm = Bitmap.createScaledBitmap(bm, pMaxWidth, Math.round(((float)pMaxWidth)*((float)bm.getHeight())/((float)bm.getWidth())), true);
+////					}
+////				} else {
+////					// Bitmap의 가로가 더 긴 경우, 목표의 세로에 맞춰서 스케일
+////					if(pMaxHeight < bm.getHeight()) {
+////						sbm = Bitmap.createScaledBitmap(bm, Math.round(((float)pMaxHeight)*((float)bm.getWidth())/((float)bm.getHeight())), pMaxHeight, true);
+////					}
+////					
+////				}
+////				if(sbm != null && sbm != bm) {
+//////					synchronized (bm) {
+////						bm.recycle();							
+//////					}
+////					bm = sbm;
+////				}
+////			}
+//		} catch(Throwable e) {
+//			if(bm != null && bm.isRecycled() == false) {
+////				synchronized (bm) {
+//					bm.recycle();					
+////				}
+//			}
+//			bm = null;
+//			throw e;
+//		}
+//		return bm;
+//	}
+
+	public static int calculateSampleSize(int pSrcWidth, int pSrcHeight, int pMaxWidth, int pMaxHeight) {
+    		int ret = 1;
+    		if(pSrcWidth > 1 && pSrcHeight > 1 && pMaxWidth > 1 && pMaxHeight > 1) {
+    //			if(Tool_App.isTablet() || Tool_App.getDisplayMetrics().densityDpi <= DisplayMetrics.DENSITY_HIGH) {
+    //				while(pSrcWidth / ret > pMaxWidth * 2f) {
+    //					ret *= 2;
+    //				}
+    //				while(pSrcHeight / ret > pMaxHeight * 3f) {
+    //					ret *= 2;
+    //				}
+    //			} else {
+    //				while(pSrcWidth / ret > pMaxWidth * 2f) {
+    //					ret *= 2;
+    //				}
+    //				while(pSrcHeight / ret > pMaxHeight * 3f) {
+    //					ret *= 2;
+    //				}
+    //			}
+    			
+    			while(pSrcWidth / ret > pMaxWidth * 3f) {
+    				ret *= 2;
+    			}
+    			while(pSrcHeight / ret > pMaxHeight * 3f) {
+    				ret *= 2;
+    			}
+    			ret = Math.min(ret, 16);
+    			
+    		}
+    		log("calculateSampleSize pSrcWidth:"+pSrcWidth+" pSrcHeight:"+pSrcHeight+" pMaxWidth:"+pMaxWidth+" pMaxHeight:"+pMaxHeight+" ret:"+ret);
+    		return ret;
+    	}
 }
